@@ -276,6 +276,139 @@ class MACDIndicator:
         
         return False, None
     
+    def detect_macd_peak(
+        self,
+        prices: list[float],
+        lookback: int = 3
+    ) -> Tuple[bool, Optional[Dict]]:
+        """
+        Phát hiện histogram đang ở đỉnh (tăng dần sau đó giảm)
+        
+        Args:
+            prices: Danh sách giá đóng cửa
+            lookback: Số nến để kiểm tra xu hướng (mặc định 3)
+        
+        Returns:
+            (is_peak, peak_info)
+            peak_info: Dict chứa thông tin về đỉnh (position, strength, histogram_values)
+        """
+        df = self.calculate(prices, return_dataframe=True)
+        
+        if df is None or len(df) < lookback + 1:
+            return False, None
+        
+        # Lấy dữ liệu histogram gần nhất
+        histogram_values = df['histogram'].tail(lookback + 1).values
+        
+        # Loại bỏ NaN
+        histogram_values = histogram_values[~pd.isna(histogram_values)]
+        
+        if len(histogram_values) < lookback + 1:
+            return False, None
+        
+        # Kiểm tra pattern: tăng dần (lookback nến đầu) sau đó giảm (nến cuối)
+        is_increasing = all(histogram_values[i] < histogram_values[i+1] for i in range(lookback-1))
+        is_decreasing_now = histogram_values[-1] < histogram_values[-2]
+        
+        if is_increasing and is_decreasing_now:
+            peak_value = float(histogram_values[-2])  # Đỉnh là nến trước nến hiện tại
+            strength = abs(peak_value - histogram_values[0])  # Độ mạnh của đỉnh
+            
+            return True, {
+                'type': 'peak',
+                'position': len(df) - 2,  # Vị trí của đỉnh
+                'peak_value': peak_value,
+                'current_value': float(histogram_values[-1]),
+                'strength': strength,
+                'decline': peak_value - histogram_values[-1],
+                'histogram_values': [float(v) for v in histogram_values]
+            }
+        
+        return False, None
+    
+    def detect_macd_trough(
+        self,
+        prices: list[float],
+        lookback: int = 3
+    ) -> Tuple[bool, Optional[Dict]]:
+        """
+        Phát hiện histogram đang ở đáy (giảm dần sau đó tăng)
+        
+        Args:
+            prices: Danh sách giá đóng cửa
+            lookback: Số nến để kiểm tra xu hướng (mặc định 3)
+        
+        Returns:
+            (is_trough, trough_info)
+            trough_info: Dict chứa thông tin về đáy (position, strength, histogram_values)
+        """
+        df = self.calculate(prices, return_dataframe=True)
+        
+        if df is None or len(df) < lookback + 1:
+            return False, None
+        
+        # Lấy dữ liệu histogram gần nhất
+        histogram_values = df['histogram'].tail(lookback + 1).values
+        
+        # Loại bỏ NaN
+        histogram_values = histogram_values[~pd.isna(histogram_values)]
+        
+        if len(histogram_values) < lookback + 1:
+            return False, None
+        
+        # Kiểm tra pattern: giảm dần (lookback nến đầu) sau đó tăng (nến cuối)
+        is_decreasing = all(histogram_values[i] > histogram_values[i+1] for i in range(lookback-1))
+        is_increasing_now = histogram_values[-1] > histogram_values[-2]
+        
+        if is_decreasing and is_increasing_now:
+            trough_value = float(histogram_values[-2])  # Đáy là nến trước nến hiện tại
+            strength = abs(histogram_values[0] - trough_value)  # Độ mạnh của đáy
+            
+            return True, {
+                'type': 'trough',
+                'position': len(df) - 2,  # Vị trí của đáy
+                'trough_value': trough_value,
+                'current_value': float(histogram_values[-1]),
+                'strength': strength,
+                'rise': histogram_values[-1] - trough_value,
+                'histogram_values': [float(v) for v in histogram_values]
+            }
+        
+        return False, None
+    
+    def detect_macd_reversal(
+        self,
+        prices: list[float],
+        lookback: int = 3
+    ) -> Optional[Dict]:
+        """
+        Phát hiện điểm đảo chiều của MACD (peak hoặc trough)
+        
+        Args:
+            prices: Danh sách giá đóng cửa
+            lookback: Số nến để kiểm tra xu hướng
+        
+        Returns:
+            Dict chứa thông tin về reversal:
+            - type: 'peak' hoặc 'trough'
+            - direction: 'bearish' (peak - tín hiệu bán) hoặc 'bullish' (trough - tín hiệu mua)
+            - strength: độ mạnh của reversal
+            - các thông tin chi tiết khác
+        """
+        # Kiểm tra peak
+        is_peak, peak_info = self.detect_macd_peak(prices, lookback)
+        if is_peak:
+            peak_info['direction'] = 'bearish'  # Peak là tín hiệu bearish (bán)
+            return peak_info
+        
+        # Kiểm tra trough
+        is_trough, trough_info = self.detect_macd_trough(prices, lookback)
+        if is_trough:
+            trough_info['direction'] = 'bullish'  # Trough là tín hiệu bullish (mua)
+            return trough_info
+        
+        return None
+    
     def __str__(self) -> str:
         return f"MACD({self.fast_period}, {self.slow_period}, {self.signal_period})"
 
