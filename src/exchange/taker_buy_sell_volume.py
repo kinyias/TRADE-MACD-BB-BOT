@@ -85,6 +85,19 @@ class TakerBuySellVolumeClient:
             
             data = response.data()
             logger.info(f"Successfully fetched {len(data) if data else 0} taker buy/sell volume records")
+            
+            # Convert to JSON-serializable format
+            if data:
+                try:
+                    # Try to convert objects to dicts if they have a dict() method
+                    if hasattr(data[0], 'dict'):
+                        return [vol.dict() for vol in data]
+                    # Otherwise use vars() to get object attributes as dict
+                    else:
+                        return [vars(vol) for vol in data]
+                except (AttributeError, TypeError):
+                    # If conversion fails, return as-is
+                    return data
             return data
             
         except Exception as e:

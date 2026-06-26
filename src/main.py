@@ -9,6 +9,8 @@ from src.exchange.binance_rest import BinanceRestClient
 from src.exchange.binance_ws import BinanceWebSocketClient
 from src.exchange.funding_rate import FundingRateClient
 from src.exchange.order_book import order_book
+from src.exchange.recent_trades_list import RecentTradesClient
+from src.exchange.taker_buy_sell_volume import TakerBuySellVolumeClient
 from src.models.candle import Candle
 from src.notifications.telegram import TelegramNotifier
 from src.indicator.macd import MACDIndicator
@@ -388,6 +390,125 @@ def get_volume_profile():
             "total_volume": result.total_volume
         },
         "levels": levels,
+        "timestamp": datetime.now().isoformat()
+    })
+
+
+@app.route('/recent_trades')
+def get_recent_trades():
+    """Get recent trades list for a symbol"""
+    # Get symbol from query parameters
+    symbol = request.args.get('symbol', SYMBOL)
+    
+    # Get optional limit parameter (default 500)
+    try:
+        limit = int(request.args.get('limit', 500))
+        if limit <= 0 or limit > 1000:
+            return jsonify({
+                "error": "Invalid limit parameter",
+                "message": "Limit must be between 1 and 1000"
+            }), 400
+    except ValueError:
+        return jsonify({
+            "error": "Invalid limit parameter",
+            "message": "Limit must be a valid integer"
+        }), 400
+    
+    # Fetch recent trades data
+    client = RecentTradesClient()
+    trades_data = client.get_recent_trades(symbol=symbol, limit=limit)
+    
+    if trades_data is None:
+        return jsonify({
+            "error": "Failed to fetch recent trades",
+            "message": f"Could not retrieve recent trades data for {symbol}"
+        }), 500
+    
+    if not trades_data:
+        return jsonify({
+            "error": "No data available",
+            "message": f"No recent trades data found for {symbol}"
+        }), 404
+    
+    # Format response
+    return jsonify({
+        "symbol": symbol,
+        "count": len(trades_data),
+        "trades": trades_data,
+        "timestamp": datetime.now().isoformat()
+    })
+
+
+@app.route('/taker_volume')
+def get_taker_volume():
+    """Get taker buy/sell volume data for a symbol"""
+    # Get symbol from query parameters
+    symbol = request.args.get('symbol', SYMBOL)
+    
+    # Get period parameter
+    period = request.args.get('period', TIMEFRAME)
+    valid_periods = ['5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d']
+    if period not in valid_periods:
+        return jsonify({
+            "error": "Invalid period parameter",
+            "message": f"Period must be one of: {', '.join(valid_periods)}"
+        }), 400
+    
+    # Get optional limit parameter (default 100)
+    try:
+        limit = int(request.args.get('limit', 100))
+        if limit <= 0 or limit > 500:
+            return jsonify({
+                "error": "Invalid limit parameter",
+                "message": "Limit must be between 1 and 500"
+            }), 400
+    except ValueError:
+        return jsonify({
+            "error": "Invalid limit parameter",
+            "message": "Limit must be a valid integer"
+        }), 400
+    
+    # Get optional start_time and end_time parameters
+    start_time = request.args.get('start_time')
+    end_time = request.args.get('end_time')
+    
+    try:
+        start_time = int(start_time) if start_time else None
+        end_time = int(end_time) if end_time else None
+    except ValueError:
+        return jsonify({
+            "error": "Invalid time parameter",
+            "message": "start_time and end_time must be valid integers (milliseconds)"
+        }), 400
+    
+    # Fetch taker buy/sell volume data
+    client = TakerBuySellVolumeClient()
+    volume_data = client.get_taker_buy_sell_volume(
+        symbol=symbol,
+        period=period,
+        limit=limit,
+        start_time=start_time,
+        end_time=end_time
+    )
+    
+    if volume_data is None:
+        return jsonify({
+            "error": "Failed to fetch taker volume",
+            "message": f"Could not retrieve taker buy/sell volume data for {symbol}"
+        }), 500
+    
+    if not volume_data:
+        return jsonify({
+            "error": "No data available",
+            "message": f"No taker buy/sell volume data found for {symbol}"
+        }), 404
+    
+    # Format response
+    return jsonify({
+        "symbol": symbol,
+        "period": period,
+        "count": len(volume_data),
+        "volume_data": volume_data,
         "timestamp": datetime.now().isoformat()
     })
 

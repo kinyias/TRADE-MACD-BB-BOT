@@ -55,6 +55,19 @@ class RecentTradesClient:
             
             data = response.data()
             logger.info(f"Successfully fetched {len(data) if data else 0} recent trades records")
+            
+            # Convert to JSON-serializable format
+            if data:
+                try:
+                    # Try to convert objects to dicts if they have a dict() method
+                    if hasattr(data[0], 'dict'):
+                        return [trade.dict() for trade in data]
+                    # Otherwise use vars() to get object attributes as dict
+                    else:
+                        return [vars(trade) for trade in data]
+                except (AttributeError, TypeError):
+                    # If conversion fails, return as-is
+                    return data
             return data
             
         except Exception as e:
