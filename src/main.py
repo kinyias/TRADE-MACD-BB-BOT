@@ -1,15 +1,19 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import asyncio
 import logging
 import threading
+import requests
 from datetime import datetime
 from src.config.settings import *
 from src.exchange.binance_rest import BinanceRestClient
 from src.exchange.binance_ws import BinanceWebSocketClient
+from src.exchange.funding_rate import FundingRateClient
+from src.exchange.order_book import order_book
 from src.models.candle import Candle
 from src.notifications.telegram import TelegramNotifier
 from src.indicator.macd import MACDIndicator
 from src.indicator.ema import EMAIndicator
+from src.exchange.volume_profile import VolumeProfileAnalyzer
 
 # Setup logging
 logging.basicConfig(
@@ -33,6 +37,7 @@ bot_status = {
 candles_data = []
 macd_indicator = MACDIndicator(fast_period=12, slow_period=26, signal_period=9)
 ema_indicator = EMAIndicator(period=200)
+volume_profile_analyzer = VolumeProfileAnalyzer(num_bins=24, value_area_percent=0.70)
 
 
 @app.route('/')
@@ -204,6 +209,185 @@ def get_ema():
         "bounce": bounce,
         "support_resistance": support_resistance,
         "candles_count": len(candles_data),
+        "timestamp": datetime.now().isoformat()
+    })
+
+
+@app.route('/funding')
+def get_funding_rate():
+    """Get funding rate information for a symbol"""
+    # Get symbol from query parameters
+    symbol = SYMBOL
+    
+    if not symbol:
+        return jsonify({
+            "error": "Missing required parameter",
+            "message": "Please provide 'symbol' parameter (e.g., ?symbol=BTCUSDT)"
+        }), 400
+    
+    # Get optional limit parameter (default 10)
+    try:
+        limit = int(request.args.get('limit', 10))
+        if limit <= 0 or limit > 1000:
+            return jsonify({
+                "error": "Invalid limit parameter",
+                "message": "Limit must be between 1 and 1000"
+            }), 400
+    except ValueError:
+        return jsonify({
+            "error": "Invalid limit parameter",
+            "message": "Limit must be a valid integer"
+        }), 400
+    
+    # Fetch funding rate data
+    client = FundingRateClient()
+    funding_data = client.get_funding_rate(symbol=symbol, limit=limit)
+    
+    if funding_data is None:
+        return jsonify({
+            "error": "Failed to fetch funding rate",
+            "message": f"Could not retrieve funding rate data for {symbol}"
+        }), 500
+    
+    if not funding_data:
+        return jsonify({
+            "error": "No data available",
+            "message": f"No funding rate data found for {symbol}"
+        }), 404
+    
+    # Format response
+    return jsonify({
+        "symbol": symbol,
+        "count": len(funding_data),
+        "funding_rates": funding_data,
+        "timestamp": datetime.now().isoformat()
+    })
+
+
+@app.route('/order_book')
+def get_order_book():
+    """Get order book data for a symbol"""
+    # Get symbol from query parameters
+    symbol = request.args.get('symbol', SYMBOL)
+    
+    # Get optional limit parameter (default 100)
+    try:
+        limit = int(request.args.get('limit', 100))
+        if limit <= 0 or limit > 100:
+            return jsonify({
+                "error": "Invalid limit parameter",
+                "message": "Limit must be between 1 and 100"
+            }), 400
+    except ValueError:
+        return jsonify({
+            "error": "Invalid limit parameter",
+            "message": "Limit must be a valid integer"
+        }), 400
+    
+    # Fetch order book data
+    order_book_data = order_book(symbol=symbol, limit=limit)
+    
+    if order_book_data is None:
+        return jsonify({
+            "error": "Failed to fetch order book",
+            "message": f"Could not retrieve order book data for {symbol}"
+        }), 500
+    
+    # Format response
+    return jsonify({
+        "symbol": symbol,
+        "limit": limit,
+        "order_book": order_book_data,
+        "timestamp": datetime.now().isoformat()
+    })
+
+
+@app.route('/volume_profile')
+def get_volume_profile():
+    """Get volume profile analysis from Binance klines data"""
+    # Get parameters from query string or use defaults
+    symbol = request.args.get('symbol', SYMBOL)
+    interval = request.args.get('interval', TIMEFRAME)
+    limit = int(request.args.get('limit', 800))
+    
+    # Validate limit
+    if limit <= 0 or limit > 1000:
+        return jsonify({
+            "error": "Invalid limit parameter",
+            "message": "Limit must be between 1 and 1000"
+        }), 400
+    
+    # Fetch klines from Binance
+    url = f"https://fapi.binance.com/fapi/v1/klines"
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "limit": limit
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        klines = response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch klines: {e}")
+        return jsonify({
+            "error": "Failed to fetch klines data",
+            "message": str(e)
+        }), 500
+    
+    if not klines or len(klines) < 2:
+        return jsonify({
+            "error": "Insufficient data",
+            "message": "Need at least 2 candles for volume profile analysis"
+        }), 404
+    
+    # Parse klines data
+    # Binance klines format: [open_time, open, high, low, close, volume, ...]
+    try:
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+        closes = [float(k[4]) for k in klines]
+        volumes = [float(k[5]) for k in klines]
+    except (IndexError, ValueError) as e:
+        logger.error(f"Failed to parse klines data: {e}")
+        return jsonify({
+            "error": "Failed to parse klines data",
+            "message": str(e)
+        }), 500
+    
+    # Analyze volume profile
+    result = volume_profile_analyzer.analyze(highs, lows, closes, volumes)
+    
+    if not result:
+        return jsonify({
+            "error": "Volume profile analysis failed",
+            "message": "Could not calculate volume profile"
+        }), 500
+    
+    # Get support/resistance levels
+    levels = volume_profile_analyzer.get_support_resistance_levels(result, threshold_percent=0.8)
+    
+    # Prepare response
+    return jsonify({
+        "symbol": symbol,
+        "interval": interval,
+        "candles_analyzed": len(klines),
+        "price_range": {
+            "high": max(highs),
+            "low": min(lows),
+            "current": closes[-1]
+        },
+        "volume_profile": {
+            "poc": result.poc,
+            "value_area": {
+                "high": result.value_area_high,
+                "low": result.value_area_low,
+                "volume_percent": result.value_area_volume_percent
+            },
+            "total_volume": result.total_volume
+        },
+        "levels": levels,
         "timestamp": datetime.now().isoformat()
     })
 
