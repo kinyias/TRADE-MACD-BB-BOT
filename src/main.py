@@ -16,6 +16,8 @@ from src.notifications.telegram import TelegramNotifier
 from src.indicator.macd import MACDIndicator
 from src.indicator.ema import EMAIndicator
 from src.exchange.volume_profile import VolumeProfileAnalyzer
+from src.indicator.market_analyzer import MarketAnalyzer
+from src.indicator.ai import analyze_market_with_ai
 
 # Setup logging
 logging.basicConfig(
@@ -512,6 +514,98 @@ def get_taker_volume():
         "timestamp": datetime.now().isoformat()
     })
 
+@app.route('/market_analyzer')
+def analyze_market():
+    """
+    Analyze market using AI with dynamic parameters
+    
+    Query Parameters:
+    - symbol: Trading pair (default: from settings)
+    - timeframe: Timeframe interval (default: from settings)
+    - klines_limit: Number of klines to fetch (default: 100, max: 1500)
+    - model: AI model to use (default: openrouter/owl-alpha)
+    """
+    # Get parameters from query string
+    symbol = request.args.get('symbol', SYMBOL)
+    timeframe = request.args.get('timeframe', TIMEFRAME)
+    model = request.args.get('model', 'openrouter/owl-alpha')
+    
+    # Validate and parse klines_limit
+    try:
+        klines_limit = int(request.args.get('klines_limit', 100))
+        if klines_limit <= 0 or klines_limit > 1500:
+            return jsonify({
+                "error": "Invalid klines_limit parameter",
+                "message": "klines_limit must be between 1 and 1500"
+            }), 400
+    except ValueError:
+        return jsonify({
+            "error": "Invalid klines_limit parameter",
+            "message": "klines_limit must be a valid integer"
+        }), 400
+    
+    # Validate timeframe
+    valid_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
+    if timeframe not in valid_timeframes:
+        return jsonify({
+            "error": "Invalid timeframe parameter",
+            "message": f"timeframe must be one of: {', '.join(valid_timeframes)}"
+        }), 400
+    
+    try:
+        logger.info(f"Starting market analysis for {symbol} on {timeframe} with {klines_limit} klines")
+        
+        # Initialize MarketAnalyzer with dynamic parameters
+        analyzer = MarketAnalyzer(symbol=symbol, timeframe=timeframe)
+        
+        # Collect data with custom klines_limit
+        data = analyzer.collect_all_data(klines_limit=klines_limit)
+        
+        if not data:
+            return jsonify({
+                "error": "Data collection failed",
+                "message": "Could not collect market data. Please check logs for details."
+            }), 500
+        
+        # Import AI analysis function
+        from src.indicator.ai import analyze_market_with_ai
+        
+        # Perform AI analysis with collected data
+        analysis_result = analyze_market_with_ai(
+            klines_data=data['klines'],
+            order_book_data=data['order_book'],
+            volume_profile_data=data['volume_profile'],
+            recent_trades_data=data['recent_trades'],
+            taker_volume_data=data['taker_volume'],
+            funding_rate_data=data['funding_rate'],
+            current_price=data['current_price'],
+            symbol=symbol,
+            timeframe=timeframe,
+            model=model
+        )
+        
+        if not analysis_result:
+            return jsonify({
+                "error": "Analysis failed",
+                "message": "AI analysis returned no results. Please check logs for details."
+            }), 500
+        
+        # Return successful analysis
+        return jsonify({
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "klines_limit": klines_limit,
+            "model": model,
+            "analysis": analysis_result,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error during market analysis: {e}")
+        return jsonify({
+            "error": "Analysis error",
+            "message": str(e)
+        }), 500
 
 async def main():
     """Main function"""
@@ -615,6 +709,129 @@ async def main():
                     
                     telegram.send_message(message)
                     logger.info(f"🎯 {signal_type} SIGNAL sent for {symbol} at ${candle.close:.2f}")
+                    
+                    # Thực hiện market analysis sau khi gửi TRADING SIGNAL
+                    try:
+                        logger.info("Starting market analysis...")
+                        
+                        # Initialize MarketAnalyzer
+                        analyzer = MarketAnalyzer(symbol=symbol, timeframe=interval)
+                        
+                        # Tái sử dụng candles_data có sẵn thay vì fetch lại
+                        # Convert Candle objects sang format klines
+                        klines = []
+                        for c in candles_data:
+                            klines.append([
+                                int(c.datetime.timestamp() * 1000),  # Open time
+                                str(c.open),
+                                str(c.high),
+                                str(c.low),
+                                str(c.close),
+                                str(c.volume),
+                                int(c.datetime.timestamp() * 1000),  # Close time (approximate)
+                                str(c.quote_volume) if hasattr(c, 'quote_volume') else "0",
+                                0,  # Number of trades
+                                str(c.volume),  # Taker buy base volume
+                                str(c.quote_volume) if hasattr(c, 'quote_volume') else "0",  # Taker buy quote volume
+                                "0"  # Ignore
+                            ])
+                        
+                        # Thu thập các dữ liệu khác (không lấy klines nữa)
+                        # Order book
+                        order_book_data = order_book(symbol=symbol, limit=100)
+                        
+                        # Volume profile từ candles có sẵn
+                        highs = [float(c.high) for c in candles_data]
+                        lows = [float(c.low) for c in candles_data]
+                        closes = [float(c.close) for c in candles_data]
+                        volumes = [float(c.volume) for c in candles_data]
+                        
+                        volume_profile_result = volume_profile_analyzer.analyze(
+                            highs=highs, lows=lows, closes=closes, volumes=volumes
+                        )
+                        
+                        volume_profile_data = {}
+                        if volume_profile_result:
+                            volume_profile_data = {
+                                'poc': volume_profile_result.poc,
+                                'value_area_high': volume_profile_result.value_area_high,
+                                'value_area_low': volume_profile_result.value_area_low,
+                                'total_volume': volume_profile_result.total_volume,
+                                'value_area_volume_percent': volume_profile_result.value_area_volume_percent,
+                                'volume_by_price': {str(k): v for k, v in volume_profile_result.volume_by_price.items()}
+                            }
+                        
+                        # Recent trades
+                        recent_trades_data = analyzer.recent_trades_client.get_recent_trades(
+                            symbol=symbol, limit=200
+                        ) or []
+                        
+                        # Taker volume
+                        period_map = {'1m': '5m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h'}
+                        period = period_map.get(interval, '5m')
+                        taker_volume_data = analyzer.taker_volume_client.get_taker_buy_sell_volume(
+                            symbol=symbol, period=period, limit=30
+                        ) or []
+                        
+                        # Funding rate
+                        funding_rate_data = analyzer.funding_rate_client.get_funding_rate(
+                            symbol=symbol, limit=10
+                        ) or []
+                        
+                        # Tạo data dict
+                        data = {
+                            'klines': klines,
+                            'order_book': order_book_data,
+                            'volume_profile': volume_profile_data,
+                            'recent_trades': recent_trades_data,
+                            'taker_volume': taker_volume_data,
+                            'funding_rate': funding_rate_data,
+                            'current_price': float(candle.close)
+                        }
+                        
+                        if data:
+                            # Perform AI analysis
+                            analysis_result = analyze_market_with_ai(
+                                klines_data=data['klines'],
+                                order_book_data=data['order_book'],
+                                volume_profile_data=data['volume_profile'],
+                                recent_trades_data=data['recent_trades'],
+                                taker_volume_data=data['taker_volume'],
+                                funding_rate_data=data['funding_rate'],
+                                current_price=data['current_price'],
+                                symbol=symbol,
+                                timeframe=interval,
+                                model='openrouter/owl-alpha'
+                            )
+                            
+                            if analysis_result:
+                                # Format and send market analysis message
+                                analysis_message = f"📊 <b>MARKET ANALYSIS</b> 📊\n\n"
+                                analysis_message += f"🪙 Symbol: <b>{symbol}</b> ({interval})\n"
+                                analysis_message += f"💰 Current Price: <code>${data['current_price']:.2f}</code>\n\n"
+                                
+                                # Add AI analysis content
+                                if isinstance(analysis_result, dict):
+                                    # If structured response
+                                    for key, value in analysis_result.items():
+                                        if isinstance(value, str):
+                                            analysis_message += f"<b>{key}:</b>\n{value}\n\n"
+                                        else:
+                                            analysis_message += f"<b>{key}:</b> {value}\n\n"
+                                else:
+                                    # If plain text response
+                                    analysis_message += f"{analysis_result}"
+                                
+                                telegram.send_message(analysis_message)
+                                logger.info(f"✅ Market analysis sent for {symbol}")
+                            else:
+                                logger.warning("Market analysis returned no results")
+                        else:
+                            logger.warning("Failed to collect market data for analysis")
+                            
+                    except Exception as e:
+                        logger.error(f"Error during market analysis: {e}")
+                        # Don't break the bot if analysis fails
     
     # 2. Stream real-time candles
     logger.info("=" * 50)

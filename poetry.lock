@@ -910,6 +910,21 @@ MarkupSafe = ">=2.0"
 i18n = ["Babel (>=2.7)"]
 
 [[package]]
+name = "jsonpath-python"
+version = "1.1.6"
+description = "A lightweight and powerful JSONPath implementation for Python"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "jsonpath_python-1.1.6-py3-none-any.whl", hash = "sha256:a1c50afd8d3fbbaf47a4873bc890dcb3c15da96f5c020327977d844d8731a2d4"},
+    {file = "jsonpath_python-1.1.6.tar.gz", hash = "sha256:dded9932b4ec41fb8726e09c83afa4e6be618f938c2db287cc2a81723c639671"},
+]
+
+[package.extras]
+dev = ["poethepoet", "pytest (>=8.0)", "pytest-benchmark[histogram] (>=4.0)", "pytest-cov (>=5.0)", "ruff (>=0.3)"]
+
+[[package]]
 name = "kiwisolver"
 version = "1.5.0"
 description = "A fast implementation of the Cassowary constraint solver"
@@ -1516,6 +1531,24 @@ files = [
     {file = "numpy-2.2.6-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:d042d24c90c41b54fd506da306759e06e568864df8ec17ccc17e9e884634fd00"},
     {file = "numpy-2.2.6.tar.gz", hash = "sha256:e29554e2bef54a90aa5cc07da6ce955accb83f21ab5de01a62c8478897b264fd"},
 ]
+
+[[package]]
+name = "openrouter"
+version = "0.10.3"
+description = "Official Python Client SDK for OpenRouter."
+optional = false
+python-versions = ">=3.9.2"
+groups = ["main"]
+files = [
+    {file = "openrouter-0.10.3-py3-none-any.whl", hash = "sha256:e55e0b5a001e17b25050a9223e0e93a748e2dcc2de2872051ba69cec9464f539"},
+    {file = "openrouter-0.10.3.tar.gz", hash = "sha256:bccf916c255a48dae2a13cdb013b074d32f1042debc865130401c79a2509408b"},
+]
+
+[package.dependencies]
+httpcore = ">=1.0.9"
+httpx = ">=0.28.1"
+jsonpath-python = ">=1.0.6"
+pydantic = ">=2.11.2"
 
 [[package]]
 name = "packaging"
@@ -2615,4 +2648,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "e44df482d45764767f39ad2a340697b46d185a50891b7efbde801969aa7a4fbe"
+content-hash = "10b900f8150974a56729dbb1e59dd6d0c45ca2f4d15fbfdff1191c9bec043631"
