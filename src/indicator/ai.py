@@ -87,7 +87,7 @@ def build_market_analysis_prompt(
 
 1. KLINES DATA (Nến gần đây):
 ```json
-{json.dumps(klines_data[-20:], indent=2)}
+{json.dumps(klines_data[-80:], indent=2)}
 ```
 
 2. ORDER BOOK (Sổ lệnh):
@@ -102,7 +102,7 @@ def build_market_analysis_prompt(
 
 4. RECENT TRADES (Giao dịch gần đây):
 ```json
-{json.dumps(recent_trades_data[:50], indent=2)}
+{json.dumps(recent_trades_data[:100], indent=2)}
 ```
 
 5. TAKER BUY/SELL VOLUME:
@@ -165,67 +165,59 @@ Dựa trên RECENT TRADES, TAKER VOLUME, ORDER BOOK và FUNDING RATE:
 **OUTPUT FORMAT (Trả về text có cấu trúc, tối ưu cho Telegram):**
 
 ```
-📊 *PHÂN TÍCH THỊ TRƯỜNG {symbol}* | `{timeframe}`
+📊 PHÂN TÍCH THỊ TRƯỜNG {symbol} | `{timeframe}`
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 *Giá hiện tại:* `${current_price}`
-⏰ *Thời gian:* [timestamp]
+💰 Giá hiện tại: `${current_price}`
+⏰ Thời gian: [timestamp]
 
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
-📈 *TÍN HIỆU GIAO DỊCH*
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+📈 TÍN HIỆU GIAO DỊCH
 
-🎯 *HÀNH ĐỘNG:* [BUY 🟢/SELL 🔴/WAIT ⏸️]
+🎯 HÀNH ĐỘNG: [BUY 🟢/SELL 🔴/WAIT ⏸️]
 
-📍 *ENTRY ZONE:* `$XX,XXX - $XX,XXX`
-🛑 *STOP LOSS:* `$XX,XXX` (-X.XX%)
+📍 ENTRY ZONE: `$XX,XXX - $XX,XXX`
+🛑 STOP LOSS: `$XX,XXX` (-X.XX%)
 
-🎯 *TP1:* `$XX,XXX` (+X.XX%) - Chốt 50%
-🎯 *TP2:* `$XX,XXX` (+X.XX%) - Chốt 50%
+🎯 TP1: `$XX,XXX` (+X.XX%) - Chốt 50%
+🎯 TP2: `$XX,XXX` (+X.XX%) - Chốt 50%
 
-💡 *LÝ DO:* [Giải thích ngắn gọn tại sao đưa ra tín hiệu này]
+💡 LÝ DO: [Giải thích ngắn gọn tại sao đưa ra tín hiệu này]
 
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
-🗺️ *VÙNG GIÁ QUAN TRỌNG*
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+🗺️ VÙNG GIÁ QUAN TRỌNG
 
-📌 *POC:* `$XX,XXX`
-📊 *VA High:* `$XX,XXX` | *VA Low:* `$XX,XXX`
+📌 POC: `$XX,XXX`
+📊 VA High: `$XX,XXX` | VA Low: `$XX,XXX`
 
-🟢 *SUPPORT MẠNH:*
+🟢 SUPPORT MẠNH:
   • `$XX,XXX` - [HIGH/MED/LOW] - Cách X.XX%
     _[Lý do]_
   • `$XX,XXX` - [HIGH/MED/LOW] - Cách X.XX%
     _[Lý do]_
 
-🔴 *RESISTANCE MẠNH:*
+🔴 RESISTANCE MẠNH:
   • `$XX,XXX` - [HIGH/MED/LOW] - Cách X.XX%
     _[Lý do]_
   • `$XX,XXX` - [HIGH/MED/LOW] - Cách X.XX%
     _[Lý do]_
 
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
-⚡ *PHÂN TÍCH ĐỘNG LỰC*
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+⚡ PHÂN TÍCH ĐỘNG LỰC
 
-📈 *Xu hướng:* [BULLISH 🐂/BEARISH 🐻/SIDEWAYS ↔️]
-💪 *Độ mạnh:* [X/10] ⭐⭐⭐
-⚖️ *Lực lượng:* [BUYERS 🟢/SELLERS 🔴/NEUTRAL ⚪]
-📊 *Buy/Sell:* `X.XX`
+📈 Xu hướng: [BULLISH 🐂/BEARISH 🐻/SIDEWAYS ↔️]
+💪 Độ mạnh: [X/10] ⭐⭐⭐
+⚖️ Lực lượng: [BUYERS 🟢/SELLERS 🔴/NEUTRAL ⚪]
+📊 Buy/Sell: `X.XX`
 
-🔄 *Order Book:* [BUY_PRESSURE 🟢/SELL_PRESSURE 🔴/BALANCED ⚖️]
-📉 *Funding:* [BULL 🟢/BEAR 🔴/NEUTRAL ⚪]
+🔄 Order Book: [BUY_PRESSURE 🟢/SELL_PRESSURE 🔴/BALANCED ⚖️]
+📉 Funding: [BULL 🟢/BEAR 🔴/NEUTRAL ⚪]
 
-⚠️ *Đảo chiều:* XX%
-🚨 *Dấu hiệu:*
+⚠️ Đảo chiều: XX%
+🚨 Dấu hiệu:
   • [Dấu hiệu 1]
   • [Dấu hiệu 2]
 
-🔮 *Dự đoán 5-15p:* [BULL/BEAR/SIDE]
-🎯 *Độ tin cậy:* XX%
+🔮 Dự đoán 5-15p: [BULL/BEAR/SIDE]
+🎯 Độ tin cậy: XX%
 
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
-📝 *TÓM TẮT*
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+📝 TÓM TẮT
 
 [Viết 3-5 câu tóm tắt toàn bộ tình hình thị trường, các yếu tố chính ảnh hưởng, và khuyến nghị giao dịch. Sử dụng ngôn ngữ dễ hiểu, tránh thuật ngữ phức tạp.]
 
