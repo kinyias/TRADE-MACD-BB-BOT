@@ -39,6 +39,7 @@ bot_status = {
 
 # Global data storage
 candles_data = []
+quick_signal_history = []  # Lưu 5 quick signal gần nhất
 macd_indicator = MACDIndicator(fast_period=12, slow_period=26, signal_period=9)
 ema_indicator = EMAIndicator(period=200)
 volume_profile_analyzer = VolumeProfileAnalyzer(num_bins=24, value_area_percent=0.70)
@@ -649,7 +650,7 @@ async def main():
     # Tạo callback function có thể truy cập vào candles list
     def on_new_candle(symbol: str, interval: str, candle: Candle):
         """Callback khi nhận candle mới từ WebSocket"""
-        global bot_status, candles_data
+        global bot_status, candles_data, quick_signal_history
         
         # Thêm candle mới vào list
         candles_data.append(candle)
@@ -667,6 +668,82 @@ async def main():
             "close": candle.close,
             "time": str(candle.datetime)
         }
+        logger.info("Starting market analysis...")
+                        
+        # Initialize MarketAnalyzer
+        analyzer = MarketAnalyzer(symbol=symbol, timeframe=interval)
+        # Tái sử dụng candles_data có sẵn thay vì fetch lại
+        # Convert Candle objects sang format klines
+        klines = []
+        for c in candles_data:
+            klines.append([
+                int(c.datetime.timestamp() * 1000),  # Open time
+                str(c.open),
+                str(c.high),
+                str(c.low),
+                str(c.close),
+                str(c.volume),
+                int(c.datetime.timestamp() * 1000),  # Close time (approximate)
+                str(c.quote_volume) if hasattr(c, 'quote_volume') else "0",
+                0,  # Number of trades
+                str(c.volume),  # Taker buy base volume
+                str(c.quote_volume) if hasattr(c, 'quote_volume') else "0",  # Taker buy quote volume
+                "0"  # Ignore
+            ])
+        
+        # Thu thập các dữ liệu khác (không lấy klines nữa)
+        # Order book
+        order_book_data = order_book(symbol=symbol, limit=100)
+        
+        # Volume profile từ candles có sẵn
+        highs = [float(c.high) for c in candles_data]
+        lows = [float(c.low) for c in candles_data]
+        closes = [float(c.close) for c in candles_data]
+        volumes = [float(c.volume) for c in candles_data]
+        
+        volume_profile_result = volume_profile_analyzer.analyze(
+            highs=highs, lows=lows, closes=closes, volumes=volumes
+        )
+        
+        volume_profile_data = {}
+        if volume_profile_result:
+            volume_profile_data = {
+                'poc': volume_profile_result.poc,
+                'value_area_high': volume_profile_result.value_area_high,
+                'value_area_low': volume_profile_result.value_area_low,
+                'total_volume': volume_profile_result.total_volume,
+                'value_area_volume_percent': volume_profile_result.value_area_volume_percent,
+                'volume_by_price': {str(k): v for k, v in volume_profile_result.volume_by_price.items()}
+            }
+        
+        # Recent trades
+        recent_trades_data = analyzer.recent_trades_client.get_recent_trades(
+            symbol=symbol, limit=200
+        ) or []
+        
+        # Taker volume
+        period_map = {'1m': '5m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h'}
+        period = period_map.get(interval, '5m')
+        taker_volume_data = analyzer.taker_volume_client.get_taker_buy_sell_volume(
+            symbol=symbol, period=period, limit=30
+        ) or []
+        
+        # Funding rate
+        funding_rate_data = analyzer.funding_rate_client.get_funding_rate(
+            symbol=symbol, limit=10
+        ) or []
+        
+        # Tạo data dict
+        data = {
+            'klines': klines,
+            'order_book': order_book_data,
+            'volume_profile': volume_profile_data,
+            'recent_trades': recent_trades_data,
+            'taker_volume': taker_volume_data,
+            'funding_rate': funding_rate_data,
+            'current_price': float(candle.close)
+        }
+                        
          # Gửi thêm quyết định nhanh LONG/SHORT/NEUTRAL từ AI
         quick_signal = analyze_market_quick_signal(
             klines_data=data['klines'],
@@ -678,10 +755,24 @@ async def main():
             current_price=data['current_price'],
             symbol=symbol,
             timeframe=interval,
+            signal_history=quick_signal_history,
             model='nvidia/nemotron-3-ultra-550b-a55b:free'
         )
 
         if quick_signal:
+            # Lưu signal vào lịch sử
+            signal_entry = {
+                'timestamp': datetime.now().isoformat(),
+                'symbol': symbol,
+                'price': data['current_price'],
+                'signal': quick_signal
+            }
+            quick_signal_history.append(signal_entry)
+            
+            # Giữ tối đa 5 signal gần nhất
+            if len(quick_signal_history) > 5:
+                quick_signal_history.pop(0)
+            
             quick_message = f"⚡ <b>QUICK SIGNAL</b> ⚡\n\n"
             quick_message += f"🪙 Symbol: <b>{symbol}</b> ({interval})\n"
             quick_message += f"💰 Price: <code>${data['current_price']:.2f}</code>\n\n"
@@ -735,83 +826,6 @@ async def main():
                     
                     # Thực hiện market analysis sau khi gửi TRADING SIGNAL
                     try:
-                        logger.info("Starting market analysis...")
-                        
-                        # Initialize MarketAnalyzer
-                        analyzer = MarketAnalyzer(symbol=symbol, timeframe=interval)
-                        
-                        # Tái sử dụng candles_data có sẵn thay vì fetch lại
-                        # Convert Candle objects sang format klines
-                        klines = []
-                        for c in candles_data:
-                            klines.append([
-                                int(c.datetime.timestamp() * 1000),  # Open time
-                                str(c.open),
-                                str(c.high),
-                                str(c.low),
-                                str(c.close),
-                                str(c.volume),
-                                int(c.datetime.timestamp() * 1000),  # Close time (approximate)
-                                str(c.quote_volume) if hasattr(c, 'quote_volume') else "0",
-                                0,  # Number of trades
-                                str(c.volume),  # Taker buy base volume
-                                str(c.quote_volume) if hasattr(c, 'quote_volume') else "0",  # Taker buy quote volume
-                                "0"  # Ignore
-                            ])
-                        
-                        # Thu thập các dữ liệu khác (không lấy klines nữa)
-                        # Order book
-                        order_book_data = order_book(symbol=symbol, limit=100)
-                        
-                        # Volume profile từ candles có sẵn
-                        highs = [float(c.high) for c in candles_data]
-                        lows = [float(c.low) for c in candles_data]
-                        closes = [float(c.close) for c in candles_data]
-                        volumes = [float(c.volume) for c in candles_data]
-                        
-                        volume_profile_result = volume_profile_analyzer.analyze(
-                            highs=highs, lows=lows, closes=closes, volumes=volumes
-                        )
-                        
-                        volume_profile_data = {}
-                        if volume_profile_result:
-                            volume_profile_data = {
-                                'poc': volume_profile_result.poc,
-                                'value_area_high': volume_profile_result.value_area_high,
-                                'value_area_low': volume_profile_result.value_area_low,
-                                'total_volume': volume_profile_result.total_volume,
-                                'value_area_volume_percent': volume_profile_result.value_area_volume_percent,
-                                'volume_by_price': {str(k): v for k, v in volume_profile_result.volume_by_price.items()}
-                            }
-                        
-                        # Recent trades
-                        recent_trades_data = analyzer.recent_trades_client.get_recent_trades(
-                            symbol=symbol, limit=200
-                        ) or []
-                        
-                        # Taker volume
-                        period_map = {'1m': '5m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h'}
-                        period = period_map.get(interval, '5m')
-                        taker_volume_data = analyzer.taker_volume_client.get_taker_buy_sell_volume(
-                            symbol=symbol, period=period, limit=30
-                        ) or []
-                        
-                        # Funding rate
-                        funding_rate_data = analyzer.funding_rate_client.get_funding_rate(
-                            symbol=symbol, limit=10
-                        ) or []
-                        
-                        # Tạo data dict
-                        data = {
-                            'klines': klines,
-                            'order_book': order_book_data,
-                            'volume_profile': volume_profile_data,
-                            'recent_trades': recent_trades_data,
-                            'taker_volume': taker_volume_data,
-                            'funding_rate': funding_rate_data,
-                            'current_price': float(candle.close)
-                        }
-                        
                         if data:
                             # Perform AI analysis
                             analysis_result = analyze_market_with_ai(

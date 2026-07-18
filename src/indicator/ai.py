@@ -327,7 +327,8 @@ def build_quick_signal_prompt(
     funding_rate_data: List[Dict],
     current_price: float,
     symbol: str,
-    timeframe: str
+    timeframe: str,
+    signal_history: List[Dict] = None
 ) -> str:
     """
     Xây dựng prompt NGẮN GỌN để AI quyết định nhanh: LONG / SHORT / NEUTRAL
@@ -335,6 +336,15 @@ def build_quick_signal_prompt(
     Chỉ yêu cầu AI trả lời động lực hiện tại nên LONG, SHORT hay đợi (NEUTRAL).
     Nếu có khả năng LONG/SHORT thì đưa ra Entry, TP, SL kèm 3 câu tóm tắt lý do.
     """
+    
+    # Xây dựng phần lịch sử signal
+    history_text = ""
+    if signal_history and len(signal_history) > 0:
+        history_text = "\n\n**LỊCH SỬ SIGNAL GÁN ĐÂY (5 signal gần nhất):**\n"
+        for idx, entry in enumerate(signal_history, 1):
+            history_text += f"\n{idx}. Thời gian: {entry['timestamp']}\n"
+            history_text += f"   Giá: ${entry['price']:.2f}\n"
+            history_text += f"   Signal: {entry['signal']}\n"
 
     prompt = f"""Bạn là chuyên gia scalping crypto. Hãy quyết định NHANH dựa trên dữ liệu thị trường.
 
@@ -369,10 +379,11 @@ def build_quick_signal_prompt(
 ```json
 {json.dumps(funding_rate_data, indent=2)}
 ```
-
+{history_text}
 ---
 
 **YÊU CẦU:**
+Hãy xem xét lịch sử signal trước đó (nếu có) để đưa ra quyết định tiếp theo hợp lý, tránh lặp lại sai lầm hoặc đưa ra signal mâu thuẫn liên tục.
 Chỉ cần đánh giá động lực hiện tại nên đặt LONG, SHORT hay đợi (NEUTRAL).
 - Nếu động lực chưa rõ ràng => NEUTRAL và không cần Entry/TP/SL.
 - Nếu có khả năng LONG hoặc SHORT => đưa ra Entry, TP, SL cụ thể.
@@ -412,6 +423,7 @@ def analyze_market_quick_signal(
     current_price: float,
     symbol: str,
     timeframe: str,
+    signal_history: List[Dict] = None,
     model: str = "openrouter/owl-alpha"
 ) -> Optional[str]:
     """
@@ -430,7 +442,8 @@ def analyze_market_quick_signal(
             funding_rate_data=funding_rate_data,
             current_price=current_price,
             symbol=symbol,
-            timeframe=timeframe
+            timeframe=timeframe,
+            signal_history=signal_history
         )
 
         response = call_openrouter_api(prompt, model)
