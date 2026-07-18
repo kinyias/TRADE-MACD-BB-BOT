@@ -11,6 +11,7 @@ load_dotenv()
 def call_openrouter_api(prompt: str, model: str = "openrouter/owl-alpha") -> dict:
     """
     Call OpenRouter AI API to get chat completion.
+    Automatically switches to backup API key if primary fails.
     
     Args:
         prompt: The user's prompt/question
@@ -21,30 +22,55 @@ def call_openrouter_api(prompt: str, model: str = "openrouter/owl-alpha") -> dic
     """
     url = "https://openrouter.ai/api/v1/chat/completions"
     
-    # Get API key from environment variable
-    api_key = os.getenv("OPENROUTER_API_KEY","")
-    if not api_key:
-        raise ValueError("OPENROUTER_API_KEY environment variable not set")
+    # Get API keys from environment variables
+    api_key_1 = os.getenv("OPENROUTER_API_KEY", "")
+    api_key_2 = os.getenv("OPENROUTER_API_KEY_2", "")
     
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
+    if not api_key_1 and not api_key_2:
+        raise ValueError("No OPENROUTER_API_KEY found in environment variables")
     
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt
+    # List of API keys to try
+    api_keys = []
+    if api_key_1:
+        api_keys.append(("OPENROUTER_API_KEY", api_key_1))
+    if api_key_2:
+        api_keys.append(("OPENROUTER_API_KEY_2", api_key_2))
+    
+    last_error = None
+    
+    # Try each API key
+    for key_name, api_key in api_keys:
+        try:
+            print(f"Trying {key_name}...")
+            
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
             }
-        ]
-    }
+            
+            payload = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            }
+            
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()  # Raise exception for HTTP errors
+            
+            print(f"✅ Successfully used {key_name}")
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ {key_name} failed: {e}")
+            last_error = e
+            continue
     
-    response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()  # Raise exception for HTTP errors
-    
-    return response.json()
+    # If all keys failed, raise the last error
+    raise Exception(f"All API keys failed. Last error: {last_error}")
 
 
 def build_market_analysis_prompt(
@@ -289,6 +315,144 @@ def analyze_market_with_ai(
         
     except Exception as e:
         print(f"Error analyzing market with AI: {e}")
+        return None
+
+
+def build_quick_signal_prompt(
+    klines_data: List[List],
+    order_book_data: Dict,
+    volume_profile_data: Dict,
+    recent_trades_data: List[Dict],
+    taker_volume_data: List[Dict],
+    funding_rate_data: List[Dict],
+    current_price: float,
+    symbol: str,
+    timeframe: str
+) -> str:
+    """
+    Xây dựng prompt NGẮN GỌN để AI quyết định nhanh: LONG / SHORT / NEUTRAL
+
+    Chỉ yêu cầu AI trả lời động lực hiện tại nên LONG, SHORT hay đợi (NEUTRAL).
+    Nếu có khả năng LONG/SHORT thì đưa ra Entry, TP, SL kèm 3 câu tóm tắt lý do.
+    """
+
+    prompt = f"""Bạn là chuyên gia scalping crypto. Hãy quyết định NHANH dựa trên dữ liệu thị trường.
+
+**THÔNG TIN:**
+- Symbol: {symbol}
+- Timeframe: {timeframe}
+- Giá hiện tại: {current_price}
+
+**DỮ LIỆU:**
+
+1. KLINES (nến gần đây):
+```json
+{json.dumps(klines_data[-50:], indent=2)}
+```
+
+2. ORDER BOOK:
+```json
+{json.dumps(order_book_data, indent=2)}
+```
+
+3. VOLUME PROFILE:
+```json
+{json.dumps(volume_profile_data, indent=2)}
+```
+
+4. TAKER BUY/SELL VOLUME:
+```json
+{json.dumps(taker_volume_data, indent=2)}
+```
+
+5. FUNDING RATE:
+```json
+{json.dumps(funding_rate_data, indent=2)}
+```
+
+---
+
+**YÊU CẦU:**
+Chỉ cần đánh giá động lực hiện tại nên đặt LONG, SHORT hay đợi (NEUTRAL).
+- Nếu động lực chưa rõ ràng => NEUTRAL và không cần Entry/TP/SL.
+- Nếu có khả năng LONG hoặc SHORT => đưa ra Entry, TP, SL cụ thể.
+- Luôn kèm đúng 3 câu tóm tắt lý do đưa ra quyết định.
+
+**OUTPUT FORMAT (trả về đúng format sau, tối ưu cho Telegram, không thêm gì khác):**
+
+```
+🎯 QUYẾT ĐỊNH: [LONG 🟢/SHORT 🔴/NEUTRAL ⚪]
+
+📍 ENTRY: `$XXXX`
+🎯 TP: `$XXXX`
+🛑 SL: `$XXXX`
+
+📝 LÝ DO:
+1. [Câu 1]
+2. [Câu 2]
+3. [Câu 3]
+```
+
+**LƯU Ý:**
+- Nếu NEUTRAL thì bỏ phần ENTRY/TP/SL, chỉ giữ QUYẾT ĐỊNH và 3 câu LÝ DO.
+- Phân tích dựa trên dữ liệu thực, không đoán mò.
+- Chỉ trả về đúng format trên, ngắn gọn.
+"""
+
+    return prompt
+
+
+def analyze_market_quick_signal(
+    klines_data: List[List],
+    order_book_data: Dict,
+    volume_profile_data: Dict,
+    recent_trades_data: List[Dict],
+    taker_volume_data: List[Dict],
+    funding_rate_data: List[Dict],
+    current_price: float,
+    symbol: str,
+    timeframe: str,
+    model: str = "openrouter/owl-alpha"
+) -> Optional[str]:
+    """
+    Gọi AI để đưa ra quyết định nhanh LONG/SHORT/NEUTRAL (đơn giản hơn analyze_market_with_ai)
+
+    Returns:
+        str: Kết quả quyết định dạng text có format hoặc None nếu lỗi
+    """
+    try:
+        prompt = build_quick_signal_prompt(
+            klines_data=klines_data,
+            order_book_data=order_book_data,
+            volume_profile_data=volume_profile_data,
+            recent_trades_data=recent_trades_data,
+            taker_volume_data=taker_volume_data,
+            funding_rate_data=funding_rate_data,
+            current_price=current_price,
+            symbol=symbol,
+            timeframe=timeframe
+        )
+
+        response = call_openrouter_api(prompt, model)
+
+        # Parse response and return formatted text
+        if response and "choices" in response and len(response["choices"]) > 0:
+            content = response["choices"][0]["message"]["content"]
+
+            # Remove markdown code blocks if present
+            if "```" in content:
+                parts = content.split("```")
+                if len(parts) >= 3:
+                    content = parts[1]
+                    if content.startswith(("text", "markdown", "\n")):
+                        content = content.split("\n", 1)[1] if "\n" in content else content
+
+            return content.strip()
+
+        return None
+
+    except Exception as e:
+        print(f"Error getting quick signal from AI: {e}")
         return None
 
 

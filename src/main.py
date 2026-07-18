@@ -17,7 +17,7 @@ from src.indicator.macd import MACDIndicator
 from src.indicator.ema import EMAIndicator
 from src.exchange.volume_profile import VolumeProfileAnalyzer
 from src.indicator.market_analyzer import MarketAnalyzer
-from src.indicator.ai import analyze_market_with_ai
+from src.indicator.ai import analyze_market_with_ai, analyze_market_quick_signal
 
 # Setup logging
 logging.basicConfig(
@@ -523,12 +523,12 @@ def analyze_market():
     - symbol: Trading pair (default: from settings)
     - timeframe: Timeframe interval (default: from settings)
     - klines_limit: Number of klines to fetch (default: 100, max: 1500)
-    - model: AI model to use (default: openrouter/owl-alpha)
+    - model: AI model to use (default: nvidia/nemotron-3-ultra-550b-a55b:free)
     """
     # Get parameters from query string
     symbol = request.args.get('symbol', SYMBOL)
     timeframe = request.args.get('timeframe', TIMEFRAME)
-    model = request.args.get('model', 'openrouter/owl-alpha')
+    model = request.args.get('model', 'nvidia/nemotron-3-ultra-550b-a55b:free')
     
     # Validate and parse klines_limit
     try:
@@ -667,7 +667,30 @@ async def main():
             "close": candle.close,
             "time": str(candle.datetime)
         }
-        
+         # Gửi thêm quyết định nhanh LONG/SHORT/NEUTRAL từ AI
+        quick_signal = analyze_market_quick_signal(
+            klines_data=data['klines'],
+            order_book_data=data['order_book'],
+            volume_profile_data=data['volume_profile'],
+            recent_trades_data=data['recent_trades'],
+            taker_volume_data=data['taker_volume'],
+            funding_rate_data=data['funding_rate'],
+            current_price=data['current_price'],
+            symbol=symbol,
+            timeframe=interval,
+            model='nvidia/nemotron-3-ultra-550b-a55b:free'
+        )
+
+        if quick_signal:
+            quick_message = f"⚡ <b>QUICK SIGNAL</b> ⚡\n\n"
+            quick_message += f"🪙 Symbol: <b>{symbol}</b> ({interval})\n"
+            quick_message += f"💰 Price: <code>${data['current_price']:.2f}</code>\n\n"
+            quick_message += f"{quick_signal}"
+
+            telegram.send_message(quick_message)
+            logger.info(f"✅ Quick signal sent for {symbol}")
+        else:
+            logger.warning("Quick signal returned no results")
         # Kiểm tra điều kiện gửi signal
         if len(candles_data) >= macd_indicator.slow_period + macd_indicator.signal_period:
             # Lấy giá close từ candles
@@ -801,7 +824,7 @@ async def main():
                                 current_price=data['current_price'],
                                 symbol=symbol,
                                 timeframe=interval,
-                                model='openrouter/owl-alpha'
+                                model='nvidia/nemotron-3-ultra-550b-a55b:free'
                             )
                             
                             if analysis_result:
